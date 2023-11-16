@@ -4,22 +4,49 @@ namespace FinbourneCodingExercise.Tests
     public class SimpleCacheTests
     {
         [TestMethod]
+        public void Create_ZeroLimitCache_ThrowsException()
+        {
+            Assert.ThrowsException<ArgumentOutOfRangeException>(() => CreateCache(0));
+        }
+
+        [TestMethod]
         public void Add_NewItem_AddsNewItem()
         {
             var item = "sample";
             var key = "sampleKey";
 
-            var cache = new SimpleCache();
+            var cache = CreateCache();
             cache.Add(key, item);
             Assert.IsTrue(cache.Get<string>(key) == item);
+        }
+
+        [TestMethod]
+        public void Add_NewNullItem_AddsNewItem()
+        {
+            var item = (string)null!;
+            var key = "sampleKey";
+
+            var cache = CreateCache(5);
+            cache.Add(key, item);
+            Assert.IsTrue(cache.Get<string>(key) == item);
+        }
+
+        public void Add_ItemsExceedingLimit_DoesNotOverflow()
+        {
+            var cacheLimit = 10;
+            var cacheDataCount = 100;
+
+            var cache = CreateCacheWithTestData(cacheLimit, cacheDataCount);
+            Assert.IsTrue(cache.Count == cacheLimit);
         }
 
         [DataTestMethod]
         [DataRow(1)]
         [DataRow(5)]
+        [DataRow(30)]
         public void Get_ExistingItem_ReturnsItem(int countLimit)
         {
-            var cache = new SimpleCache(countLimit);
+            var cache = CreateCache(countLimit);
             var testData = CreateTestData(countLimit);
             var itemToCheckInfo = testData[countLimit / 2];
 
@@ -36,12 +63,12 @@ namespace FinbourneCodingExercise.Tests
         }
 
         [TestMethod]
-        public void Get_OnRetrievingCacheOverflowedItem_ReturnsNull()
+        public void Get_DroppedByUsageHistoryItem_ReturnsNull()
         {
             var cacheLimit = 3;
             var itemsCount = cacheLimit+1;
 
-            var cache = new SimpleCache(cacheLimit);
+            var cache = CreateCache(cacheLimit);
             var testData = CreateTestData(itemsCount);
 
             foreach (var item in testData)
@@ -61,7 +88,7 @@ namespace FinbourneCodingExercise.Tests
             var cacheLimit = 3;
             var obj = "testObj";
 
-            var cache = new SimpleCache(cacheLimit);
+            var cache = CreateCache(cacheLimit);
             cache.Add(key, obj);
             Assert.ThrowsException<InvalidCastException>(() => cache.Get<int>(key));
         }
@@ -73,7 +100,7 @@ namespace FinbourneCodingExercise.Tests
             var cacheLimit = 3;
             var obj = new HashSet<object>(0);
 
-            var cache = new SimpleCache(cacheLimit);
+            var cache = CreateCache(cacheLimit);
             cache.Add(key, obj);
             Assert.IsNotNull(cache.Get<IEnumerable<object>>(key));
         }
@@ -106,7 +133,7 @@ namespace FinbourneCodingExercise.Tests
 
         private static SimpleCache CreateCacheWithTestData(int cacheLimit, int testDataSize)
         {
-            var cache = new SimpleCache(cacheLimit);
+            var cache = CreateCache(cacheLimit);
             var testData = CreateTestData(testDataSize);
 
             foreach (var item in testData)
@@ -115,6 +142,11 @@ namespace FinbourneCodingExercise.Tests
             }
 
             return cache;
+        }
+
+        private static SimpleCache CreateCache(int limit = 1000)
+        {
+            return new SimpleCache(new History<string>(), limit);
         }
     }
 }

@@ -11,97 +11,80 @@ namespace FinbourneCodingExercise
     // of the solution which suits your particular needs.
     // Hope I havent crossed "too-complex to maintain" line trying to make it faster.
 
-    public delegate void CacheItemEvicted(string key, object? item);
+    public delegate void CacheItem(string key, object? item);
 
     public class SimpleCache : ICache
     {
-        public event CacheItemEvicted? OnItemEviction;
-
-        // concurrentDictionary was not used since two collections needs to be updated for every operation, ReaderWriterLockSlim used instead.
-        private readonly Dictionary<string, ItemHistory<object>> _cache 
-            = new Dictionary<string, ItemHistory<object>>();
+        // concurrentDictionary was not used since multiple objects (cache and history) being updated for every operation. ReaderWriterLockSlim was used instead.
+        private readonly Dictionary<string, object> _cache = new();
+        private readonly IHistory<string> _itemsUsageHistory;
 
         /// <summary>
-        /// Represents an order of items in which they were touched. The most recently used item goes to the tail.
-        /// </summary>
-        private readonly LinkedList<string> _usageHistory = new LinkedList<string>();
-
-        /// <summary>
-        /// Syncs access to <see cref="_cache"/> and <see cref="_usageHistory"/>
+        /// Syncs access to <see cref="_cache"/> and <see cref="_itemsUsageHistory"/>
         /// </summary>
         private ReaderWriterLockSlim _sync = new ReaderWriterLockSlim(); 
         
         public int CountLimit { get; init; }
 
-        public SimpleCache(int countLimit = 1000)
+        public int Count => _cache.Count;
+
+        public event CacheItem? OnItemRemoved;
+
+        public SimpleCache(IHistory<string> history, int countLimit = 1000)
         {
             if (countLimit <= 0) throw new ArgumentOutOfRangeException("count", "must be greater than zero");
 
             CountLimit = countLimit;
+            _itemsUsageHistory = history ?? throw new ArgumentNullException(nameof(history));
         }
 
         public void Add<T>(string key, T item)
         {
-            ItemHistory<object>? evictedItem = null;
+            object? removedItem = null;
 
             _sync.EnterWriteLock();
 
             try
             {
-                if (_cache.TryGetValue(key, out var existingItem))
-                {
-                    TouchItem(existingItem.HistoryEntry);
-                    existingItem.Value = item;
-                }
-                else
-                {
-                    var usageHistoryItem = _usageHistory.AddLast(key);
-                    _cache.Add(key, new ItemHistory<object>(item, usageHistoryItem));
-                }
+                _cache[key] = item!;
+                _itemsUsageHistory.Record(key);
 
                 if (_cache.Count > CountLimit)
                 {
-                    EvictLeastUsedItem(true);
+                    removedItem = RemoveLeastUsedItemSynced();
                 }
             }
             finally { _sync.ExitWriteLock(); }
 
-            if (evictedItem != null)
+            if (removedItem != null)
             {
-                OnItemEviction?.Invoke(evictedItem.HistoryEntry.Value, evictedItem.Value);
+                OnItemRemoved?.Invoke(key, removedItem);
             }
         }
 
         public T? Get<T>(string key)
         {
-            ItemHistory<object>? historyItem = null;
-
             _sync.EnterUpgradeableReadLock();
 
             try
             {
-                if (_cache.TryGetValue(key, out historyItem))
+                if (_cache.TryGetValue(key, out var item))
                 {
-                    TouchItem(historyItem.HistoryEntry);
+                    _itemsUsageHistory.Record(key);
+                    return (T)item;
                 }
+                else
+                {
+                    return default;
+                }
+
             }
             finally { _sync.ExitUpgradeableReadLock(); }
-
-            var item = historyItem?.Value;
-
-            if (item != null)
-            {
-                return (T)item;
-            }
-            else
-            {
-                return default;
-            }
         }
 
         public bool Evict(string key)
         {
-            ItemHistory<object>? evictedItem = null;
+            object? evictedItem = null;
 
             _sync.EnterWriteLock();
 
@@ -112,59 +95,25 @@ namespace FinbourneCodingExercise
                     return false;
                 }
 
-                _usageHistory.Remove(evictedItem.HistoryEntry);
+                _itemsUsageHistory.Remove(key);
             }
             finally { _sync.ExitWriteLock(); }
 
-            OnItemEviction?.Invoke(key, evictedItem);
+            OnItemRemoved?.Invoke(key, evictedItem);
             return true;
         }
 
-        private ItemHistory<object>? EvictLeastUsedItem(bool isSyncedContext = false)
+        private object? RemoveLeastUsedItemSynced()
         {
-            if (!isSyncedContext)
-            {
-                _sync.EnterWriteLock();
-            }
+            var leastUsedItem = _itemsUsageHistory.LeastUsedItem;
 
-            try
-            {
-                var leastUsedItem = _usageHistory.First!;
-                _usageHistory.RemoveFirst();
-                _cache.Remove(leastUsedItem!.Value, out var evictedItem);
-                return evictedItem;
-            }
-            finally
-            {
-                if (!isSyncedContext)
-                {
-                    _sync.ExitWriteLock();
-                }
-            }
-        }
+            if (leastUsedItem == null)
+                throw new InvalidOperationException();
 
-        private void TouchItem(LinkedListNode<string> historyItem)
-        {
-            _sync.EnterWriteLock();
+            _itemsUsageHistory.Remove(leastUsedItem);
 
-            try
-            {
-                _usageHistory.Remove(historyItem);
-                _usageHistory.AddLast(historyItem);
-            }
-            finally { _sync.ExitWriteLock(); }
-        }
-
-        private class ItemHistory<T>
-        {
-            public ItemHistory(T? value, LinkedListNode<string> historyEntry)
-            {
-                Value = value ?? throw new ArgumentNullException(nameof(value)); ;
-                HistoryEntry = historyEntry ?? throw new ArgumentNullException(nameof(historyEntry)); ;
-            }
-
-            public T? Value { get; set; }
-            public LinkedListNode<string> HistoryEntry { get; init; }
+            _cache.Remove(leastUsedItem, out var item);
+            return item;
         }
     }
 }
