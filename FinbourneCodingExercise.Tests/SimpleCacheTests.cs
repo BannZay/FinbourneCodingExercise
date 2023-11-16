@@ -108,15 +108,36 @@ namespace FinbourneCodingExercise.Tests
         [TestMethod]
         public void Evict_ExistingItem_RemovesItem()
         {
-            var cache = CreateCacheWithTestData(3, 3);
             var itemToEvict = "X";
             var itemToEvictKey = "xKey";
 
+            var cache = CreateCacheWithTestData(3, 3);
             Assert.IsNull(cache.Get(itemToEvictKey));
             cache.Add(itemToEvictKey, itemToEvict);
             Assert.IsNotNull(cache.Get(itemToEvictKey));
             cache.Evict(itemToEvictKey);
             Assert.IsNull(cache.Get(itemToEvictKey));
+        }
+
+        public void OnItemRemovedEvent_OnItemEviction_FiresEvent()
+        {
+            var itemKey = "key";
+            var item = 5;
+
+            var cache = CreateCache();
+            var eventFired = false;
+
+            cache.OnItemRemoved += (s, o) => eventFired = true;
+            
+            cache.Add(itemKey, item);
+            cache.Evict(itemKey);
+
+            Assert.IsTrue(eventFired);
+        }
+
+        private void Cache_OnItemRemoved(string key, object? item)
+        {
+            throw new NotImplementedException();
         }
 
         private static (string id, object value)[] CreateTestData(int count)
